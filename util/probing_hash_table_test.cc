@@ -7,6 +7,8 @@
 #include <boost/test/unit_test.hpp>
 #include <boost/scoped_array.hpp>
 #include <boost/functional/hash.hpp>
+#include <boost/random/mersenne_twister.hpp>
+#include <boost/random/uniform_int_distribution.hpp>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -42,7 +44,7 @@ BOOST_AUTO_TEST_CASE(simple) {
   memset(mem.get(), 0, size);
 
   Table table(mem.get(), size);
-  const Entry *i = NULL;
+  Table::ConstIterator i;
   BOOST_CHECK(!table.Find(2, i));
   Entry to_ins;
   to_ins.key = 3;
@@ -95,6 +97,39 @@ BOOST_AUTO_TEST_CASE(Double) {
     mem.call_realloc(table.DoubleTo());
     table.Double(mem.get());
     table.CheckConsistency();
+  }
+}
+
+typedef AutoProbing<Entry64, MurmurHashEntry64> AutoTable64;
+
+BOOST_AUTO_TEST_CASE(AutoProbeRandom) {
+  AutoTable64 table(100000000, std::numeric_limits<uint64_t>::max());
+
+  std::vector<uint64_t> values;
+  values.reserve(500000);
+
+  boost::random::mt19937_64 rng;
+  boost::random::uniform_int_distribution<uint64_t> dist(0, 500000);
+  for (int i = 0; i < 500000; ++i)
+    values.push_back(dist(rng));
+
+  std::vector<uint64_t> nonvalues;
+  nonvalues.reserve(500000);
+  boost::random::uniform_int_distribution<uint64_t> dist2(500001, 1000000);
+  for (int i = 0; i < 500000; ++i)
+    nonvalues.push_back(dist2(rng));
+
+  for (std::size_t i = 0; i < values.size(); ++i)
+    table.Insert(Entry64(values[i]));
+
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    AutoTable64::ConstIterator it;
+    BOOST_CHECK(table.Find(values[i], it));
+  }
+
+  for (std::size_t i = 0; i < nonvalues.size(); ++i) {
+    AutoTable64::ConstIterator it;
+    BOOST_CHECK(!table.Find(nonvalues[i], it));
   }
 }
 

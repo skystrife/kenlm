@@ -85,6 +85,35 @@ class Power2Mod {
     std::size_t mask_;
 };
 
+class BinaryProbe {
+  public:
+    explicit BinaryProbe(std::size_t buckets) : buckets_(buckets) {}
+
+    static std::size_t RoundBuckets(std::size_t from) {
+      return from;
+    }
+
+    template <class It> It Ideal(It begin, uint64_t hash) const {
+      hash %= buckets_;
+      return It(begin + hash, hash, 0);
+    }
+
+    template <class BaseIt, class OutIt> void Next(BaseIt begin, BaseIt end, OutIt &it) const {
+      // discard probes that fall off the end of the table
+      for (; (it.hash_ ^ it.step_) >= buckets_; ++it.step_)
+        ;
+      it.ptr_ = begin.ptr_ + (it.hash_ ^ it.step_++);
+    }
+
+    void Double() {
+      buckets_ *= 2;
+    }
+
+  private:
+    std::size_t buckets_;
+};
+
+
 template <class EntryT, class HashT, class EqualT> class AutoProbing;
 
 /* Non-standard hash table
@@ -95,15 +124,106 @@ template <class EntryT, class HashT, class EqualT> class AutoProbing;
  * Uses linear probing to find value.
  * Only insert and lookup operations.
  */
-template <class EntryT, class HashT, class EqualT = std::equal_to<typename EntryT::Key>, class ModT = DivMod> class ProbingHashTable {
+template <class EntryT, class HashT, class EqualT = std::equal_to<typename EntryT::Key>, class ModT = BinaryProbe> class ProbingHashTable {
   public:
     typedef EntryT Entry;
     typedef typename Entry::Key Key;
-    typedef const Entry *ConstIterator;
-    typedef Entry *MutableIterator;
     typedef HashT Hash;
     typedef EqualT Equal;
     typedef ModT Mod;
+
+#if 0
+    typedef const Entry *ConstIterator;
+    typedef Entry *MutableIterator;
+#else
+
+    struct MutableIterator {
+      typedef Entry *pointer_type;
+
+      MutableIterator() : ptr_(NULL) {
+        // nothing
+      }
+
+      MutableIterator(pointer_type ptr) : ptr_(ptr) {
+        // nothing
+      }
+
+      MutableIterator(pointer_type ptr, std::size_t hash, std::size_t step)
+        : ptr_(ptr), hash_(hash), step_(step)
+      {
+        // nothing
+      }
+
+      operator pointer_type() const {
+        return ptr_;
+      }
+
+      pointer_type operator->() const {
+        return ptr_;
+      }
+
+      MutableIterator& operator++() {
+        ++ptr_;
+        return *this;
+      }
+
+      MutableIterator& operator--() {
+        --ptr_;
+        return *this;
+      }
+
+      pointer_type ptr_;
+      std::size_t hash_;
+      std::size_t step_;
+    };
+
+    struct ConstIterator {
+      typedef const Entry *pointer_type;
+
+      ConstIterator() : ptr_(NULL) {
+        // nothing
+      }
+
+      ConstIterator(pointer_type ptr) : ptr_(ptr) {
+        // nothing
+      }
+
+      ConstIterator(pointer_type ptr, std::size_t hash, std::size_t step)
+        : ptr_(ptr), hash_(hash), step_(step)
+      {
+        // nothing
+      }
+
+      ConstIterator(const MutableIterator& mit)
+        : ptr_(mit.ptr_), hash_(mit.hash_), step_(mit.step_) {
+        // nothing
+      }
+
+      operator pointer_type() const {
+        return ptr_;
+      }
+
+      pointer_type operator->() const {
+        return ptr_;
+      }
+
+      ConstIterator& operator++() {
+        ++ptr_;
+        return *this;
+      }
+
+      ConstIterator& operator--() {
+        --ptr_;
+        return *this;
+      }
+
+      pointer_type ptr_;
+      std::size_t hash_;
+      std::size_t step_;
+    };
+
+#endif
+
 
     static uint64_t Size(uint64_t entries, float multiplier) {
       uint64_t buckets = Mod::RoundBuckets(std::max(entries + 1, static_cast<uint64_t>(multiplier * static_cast<float>(entries))));
@@ -118,7 +238,7 @@ template <class EntryT, class HashT, class EqualT = std::equal_to<typename Entry
     {}
 
     ProbingHashTable(void *start, std::size_t allocated, const Key &invalid = Key(), const Hash &hash_func = Hash(), const Equal &equal_func = Equal())
-      : begin_(reinterpret_cast<MutableIterator>(start)),
+      : begin_(reinterpret_cast<typename MutableIterator::pointer_type>(start)),
         end_(begin_ + allocated / sizeof(Entry)),
         buckets_(end_ - begin_),
         invalid_(invalid),
@@ -132,7 +252,7 @@ template <class EntryT, class HashT, class EqualT = std::equal_to<typename Entry
     {}
 
     void Relocate(void *new_base) {
-      begin_ = reinterpret_cast<MutableIterator>(new_base);
+      begin_ = reinterpret_cast<typename MutableIterator::pointer_type>(new_base);
       end_ = begin_ + buckets_;
     }
 
@@ -140,7 +260,7 @@ template <class EntryT, class HashT, class EqualT = std::equal_to<typename Entry
       return mod_.Ideal(begin_, hash_(key));
     }
     ConstIterator Ideal(const Key key) const {
-      return mod_.Ideal(begin_, hash_(key));
+      return mod_.Ideal(ConstIterator(begin_.ptr_), hash_(key));
     }
 
     template <class T> MutableIterator Insert(const T &t) {
@@ -238,11 +358,34 @@ template <class EntryT, class HashT, class EqualT = std::equal_to<typename Entry
     // Pass clear_new = false if you are sure the new memory is initialized
     // properly (to invalid_) i.e. by mremap.
     void Double(void *new_base, bool clear_new = true) {
-      begin_ = static_cast<MutableIterator>(new_base);
+      begin_ = static_cast<typename MutableIterator::pointer_type>(new_base);
       MutableIterator old_end = begin_ + buckets_;
+
+      // copy over the old table to a temporary array
+      // this is more stupid than what was happening before, but the old
+      // method won't work for binary probing
+      util::scoped_memory tmp(buckets_ * sizeof(Entry), false);
+
+      MutableIterator tmp_begin = static_cast<typename MutableIterator::pointer_type>(tmp.get());
+      MutableIterator tmp_end = tmp_begin + buckets_;
+      std::copy(begin_.ptr_, old_end.ptr_, tmp_begin.ptr_);
+
       buckets_ *= 2;
       end_ = begin_ + buckets_;
       mod_.Double();
+
+      Entry invalid;
+      invalid.SetKey(invalid_);
+      std::fill(begin_, end_, invalid);
+
+      for (MutableIterator i = tmp_begin; i != tmp_end; ++i) {
+        if (!equal_(i->GetKey(), invalid_))
+        {
+          UncheckedInsert(*i);
+        }
+      }
+
+#if 0
       if (clear_new) {
         Entry invalid;
         invalid.SetKey(invalid_);
@@ -272,10 +415,12 @@ template <class EntryT, class HashT, class EqualT = std::equal_to<typename Entry
       for (typename std::vector<Entry>::const_iterator i(rolled_over.begin()); i != rolled_over.end(); ++i) {
         UncheckedInsert(*i);
       }
+#endif
     }
 
     // Mostly for tests, check consistency of every entry.
     void CheckConsistency() {
+#if 0
       MutableIterator last;
       for (last = end_ - 1; last >= begin_ && !equal_(last->GetKey(), invalid_); --last) {}
       UTIL_THROW_IF(last == begin_, ProbingSizeException, "Completely full");
@@ -294,6 +439,7 @@ template <class EntryT, class HashT, class EqualT = std::equal_to<typename Entry
         MutableIterator ideal = Ideal(i->GetKey());
         UTIL_THROW_IF(ideal > i || ideal <= pre_gap, Exception, "Inconsistency at position " << (i - begin_) << " with ideal " << (ideal - begin_));
       }
+#endif
     }
 
     ConstIterator RawBegin() const {
@@ -329,7 +475,7 @@ template <class EntryT, class HashT, class EqualT = std::equal_to<typename Entry
 // Resizable linear probing hash table.  This owns the memory.
 template <class EntryT, class HashT, class EqualT = std::equal_to<typename EntryT::Key> > class AutoProbing {
   private:
-    typedef ProbingHashTable<EntryT, HashT, EqualT, Power2Mod> Backend;
+    typedef ProbingHashTable<EntryT, HashT, EqualT, BinaryProbe> Backend;
   public:
     static std::size_t MemUsage(std::size_t size, float multiplier = 1.5) {
       return Backend::Size(size, multiplier);
@@ -337,8 +483,8 @@ template <class EntryT, class HashT, class EqualT = std::equal_to<typename Entry
 
     typedef EntryT Entry;
     typedef typename Entry::Key Key;
-    typedef const Entry *ConstIterator;
-    typedef Entry *MutableIterator;
+    typedef typename Backend::ConstIterator ConstIterator;
+    typedef typename Backend::MutableIterator MutableIterator;
     typedef HashT Hash;
     typedef EqualT Equal;
 
