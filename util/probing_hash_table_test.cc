@@ -103,7 +103,7 @@ BOOST_AUTO_TEST_CASE(Double) {
 typedef AutoProbing<Entry64, MurmurHashEntry64> AutoTable64;
 
 BOOST_AUTO_TEST_CASE(AutoProbeRandom) {
-  AutoTable64 table(100000000, std::numeric_limits<uint64_t>::max());
+  AutoTable64 table(5, std::numeric_limits<uint64_t>::max());
 
   std::vector<uint64_t> values;
   values.reserve(500000);
