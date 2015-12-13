@@ -62,6 +62,7 @@ set(EXE_LIST
   query
   fragment
   build_binary
+  kenlm_benchmark
 )
 
 AddExes(EXES ${EXE_LIST}
