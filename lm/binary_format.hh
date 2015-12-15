@@ -35,8 +35,9 @@ struct FixedWidthParameters {
   unsigned int search_version;
 };
 
-// This is a macro instead of an inline function so constants can be assigned using it.
+// These are macros instead of an inline function so constants can be assigned using it.
 #define ALIGN8(a) ((std::ptrdiff_t(((a)-1)/8)+1)*8)
+#define ALIGN64(a) ((std::ptrdiff_t(((a)-1)/64)+1)*64)
 
 // Parameters stored in the header of a binary file.
 struct Parameters {

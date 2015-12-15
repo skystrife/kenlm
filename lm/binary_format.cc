@@ -62,7 +62,7 @@ struct Sanity {
 };
 
 std::size_t TotalHeaderSize(unsigned char order) {
-  return ALIGN8(sizeof(Sanity) + sizeof(FixedWidthParameters) + sizeof(uint64_t) * order);
+  return ALIGN64(sizeof(Sanity) + sizeof(FixedWidthParameters) + sizeof(uint64_t) * order);
 }
 
 void WriteHeader(void *to, const Parameters &params) {
@@ -196,6 +196,12 @@ void *BinaryFormat::SetupJustVocab(std::size_t memory_size, uint8_t order) {
 void *BinaryFormat::GrowForSearch(std::size_t memory_size, std::size_t vocab_pad, void *&vocab_base) {
   assert(vocab_size_ != kInvalidSize);
   vocab_pad_ = vocab_pad;
+
+  // ensure that the search space starts on a 64 byte boundary
+  std::size_t old_size = header_size_ + vocab_size_ + vocab_pad_;
+  std::size_t align_size = ALIGN64(old_size);
+  vocab_pad_ += align_size - old_size;
+
   std::size_t new_size = header_size_ + vocab_size_ + vocab_pad_ + memory_size;
   vocab_string_offset_ = new_size;
   if (!write_mmap_ || write_method_ == Config::WRITE_AFTER) {

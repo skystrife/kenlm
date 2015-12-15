@@ -1,6 +1,7 @@
 #ifndef LM_SEARCH_HASHED_H
 #define LM_SEARCH_HASHED_H
 
+#include "lm/binary_format.hh"
 #include "lm/model_type.hh"
 #include "lm/config.hh"
 #include "lm/read_arpa.hh"
@@ -75,11 +76,11 @@ template <class Value> class HashedSearch {
     static void UpdateConfigFromBinary(const BinaryFormat &, const std::vector<uint64_t> &, uint64_t, Config &) {}
 
     static uint64_t Size(const std::vector<uint64_t> &counts, const Config &config) {
-      uint64_t ret = Unigram::Size(counts[0]);
+      uint64_t ret = ALIGN64(Unigram::Size(counts[0]));
       for (unsigned char n = 1; n < counts.size() - 1; ++n) {
-        ret += Middle::Size(counts[n], config.probing_multiplier);
+        ret += ALIGN64(Middle::Size(counts[n], config.probing_multiplier));
       }
-      return ret + Longest::Size(counts.back(), config.probing_multiplier);
+      return ret + ALIGN64(Longest::Size(counts.back(), config.probing_multiplier));
     }
 
     uint8_t *SetupMemory(uint8_t *start, const std::vector<uint64_t> &counts, const Config &config);
